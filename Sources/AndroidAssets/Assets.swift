@@ -1,18 +1,97 @@
 import Android
-import ndk.asset_manager
 
-public func asset(from assetManager: OpaquePointer, named name: String) -> String? {
-    let file: OpaquePointer = AAssetManager_open(assetManager, name, CInt(AASSET_MODE_BUFFER))
-    let length: Int64 = AAsset_getLength(file)
-    let capacity = Int(length)
-    guard let buffer: UnsafeMutableRawPointer = malloc(capacity) else { return nil }
-    memcpy(buffer, AAsset_getBuffer(file), capacity)
+public class Asset {
+    private let assetManager: OpaquePointer
+    private let asset: OpaquePointer
+    private let path: String
     
-    let pointer = buffer.assumingMemoryBound(to: UInt8.self)
-    
-    defer {
-        free(buffer)
+    public init(with assetManager: OpaquePointer, path: String) throws(AssetError) {
+        guard let asset = AAssetManager_open(assetManager, path, CInt(AASSET_MODE_RANDOM)) else { throw .notFound(path: path) }
+        self.assetManager = assetManager
+        self.asset = asset
+        self.path = path
     }
     
-    return String(decoding: UnsafeMutableBufferPointer(start: pointer, count: capacity), as: UTF8.self)
+    deinit {
+        AAsset_close(asset)
+    }
+}
+
+extension Asset: CustomStringConvertible {
+    public var description: String {
+        path
+    }
+}
+
+public extension Asset {
+    var bytes: [UInt8] {
+        var result = [UInt8]()
+        
+        while true {
+            let bytes = [UInt8](unsafeUninitializedCapacity: 4096, initializingWith: { buffer, count in
+                count = read(into: UnsafeMutableRawBufferPointer(buffer))
+            })
+            if bytes.isEmpty { break }
+            result.append(contentsOf: bytes)
+        }
+        
+        return result
+    }
+}
+
+public extension Asset {
+    var length: off_t {
+        AAsset_getLength(asset)
+    }
+    
+    func read(into buffer: UnsafeMutableRawBufferPointer) -> Int {
+        Int(AAsset_read(asset, buffer.baseAddress, buffer.count))
+    }
+    
+    func seek(position: off_t, offset: CInt = SEEK_SET) {
+        AAsset_seek(asset, position, offset)
+    }
+}
+
+internal extension Asset {
+    func seekToStart() {
+        seek(position: 0, offset: SEEK_SET)
+    }
+    
+    func seekToEnd() {
+        seek(position: 0, offset: SEEK_END)
+    }
+    
+    var position: off_t {
+        length - AAsset_getRemainingLength(asset)
+    }
+}
+
+public func assets(with assetManager: OpaquePointer, path: String = "") -> [Asset] {
+    contents(with: assetManager, path: path).map({ try! Asset(with: assetManager, path: path == "" ? $0 : "\(path)/\($0)") })
+}
+
+public func contents(with assetManager: OpaquePointer, path: String = "") -> [String] {
+    guard let directory: OpaquePointer = AAssetManager_openDir(assetManager, path) else { return [] }
+    defer {
+        AAssetDir_close(directory)
+    }
+    var result: [String] = []
+    while let pointer: UnsafePointer<CChar> = AAssetDir_getNextFileName(directory) {
+        result.append(String(cString: pointer))
+    }
+    return result
+}
+
+public enum AssetError: Error {
+    case notFound(path: String)
+}
+
+extension AssetError: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .notFound(let path):
+            return "asset not found: \(path)"
+        }
+    }
 }
