@@ -9,16 +9,20 @@ public struct Asset: Sendable {
         self.name = name
     }
     
-    public init(_ manager: OpaquePointer, name: String) {
+    public init(_ manager: OpaquePointer?, name: String) {
         self.manager = AssetManager(manager)
         self.name = name
     }
 }
 
 private extension Asset {
-    func withPointer<R>(_ body: (OpaquePointer) -> R) throws -> R {
-        guard let pointer = AAssetManager_open(manager.pointer, name, AccessMode.random.rawValue) else {
-            throw AssetError.notFound(path: name)
+    func withPointer<R>(_ body: (OpaquePointer) -> R) throws(AssetError) -> R {
+        guard let pointer = AAssetManager_open(
+            manager.pointer,
+            name,
+            AccessMode.random.rawValue
+        ) else {
+            throw .notFound(path: name)
         }
         defer {
             AAsset_close(pointer)
@@ -29,7 +33,7 @@ private extension Asset {
 
 public extension Asset {
     var bytes: [UInt8] {
-        get throws {
+        get throws(AssetError) {
             try withPointer({ pointer in
                 var result = [UInt8]()
                 
@@ -47,7 +51,7 @@ public extension Asset {
     }
     
     var length: Int {
-        get throws {
+        get throws(AssetError) {
             try withPointer({ pointer in
                 Int(AAsset_getLength(pointer))
             })
